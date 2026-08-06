@@ -1,0 +1,106 @@
+{
+  "jewelry": [
+    {
+      "name": "ear_jewelry",
+      "prompts": [
+        "earring",
+        "hoop earring",
+        "dangling earring",
+        "ear stud jewelry",
+        "ear cuff jewelry"
+      ],
+      "min_sam_score": 0.32,
+      "min_quality": 0.46,
+      "max_crop_coverage": 0.45,
+      "max_face_coverage": 0.30
+    },
+    {
+      "name": "nose_jewelry",
+      "prompts": [
+        "nose ring",
+        "nose stud jewelry",
+        "septum ring",
+        "nose piercing jewelry"
+      ],
+      "min_sam_score": 0.30,
+      "min_quality": 0.45,
+      "max_crop_coverage": 0.30,
+      "max_face_coverage": 0.08
+    },
+    {
+      "name": "lip_jewelry",
+      "prompts": [
+        "lip ring",
+        "lip stud piercing",
+        "labret stud",
+        "lip piercing jewelry"
+      ],
+      "min_sam_score": 0.30,
+      "min_quality": 0.45,
+      "max_crop_coverage": 0.30,
+      "max_face_coverage": 0.08
+    },
+    {
+      "name": "eyebrow_jewelry",
+      "prompts": [
+        "eyebrow ring",
+        "eyebrow barbell piercing",
+        "eyebrow stud jewelry"
+      ],
+      "min_sam_score": 0.30,
+      "min_quality": 0.45,
+      "max_crop_coverage": 0.30,
+      "max_face_coverage": 0.08
+    },
+    {
+      "name": "face_gems",
+      "prompts": [
+        "rhinestone attached to facial skin",
+        "decorative face gem",
+        "small jewel attached to the face",
+        "crystal decoration attached to facial skin"
+      ],
+      "min_sam_score": 0.32,
+      "min_quality": 0.47,
+      "max_crop_coverage": 0.25,
+      "max_face_coverage": 0.22
+    },
+    {
+      "name": "forehead_jewelry",
+      "prompts": [
+        "forehead jewel",
+        "bindi jewelry",
+        "decorative forehead chain",
+        "tiara jewel on forehead"
+      ],
+      "min_sam_score": 0.32,
+      "min_quality": 0.47,
+      "max_crop_coverage": 0.35,
+      "max_face_coverage": 0.16
+    },
+    {
+      "name": "nose_chain",
+      "prompts": [
+        "jewelry chain connected to nose ring",
+        "decorative nose chain across the face"
+      ],
+      "min_sam_score": 0.34,
+      "min_quality": 0.48,
+      "max_crop_coverage": 0.25,
+      "max_face_coverage": 0.18
+    },
+    {
+      "name": "neck_jewelry",
+      "prompts": [
+        "necklace",
+        "choker necklace",
+        "pendant necklace",
+        "decorative chain around the neck"
+      ],
+      "min_sam_score": 0.34,
+      "min_quality": 0.48,
+      "max_crop_coverage": 0.55,
+      "max_face_coverage": 1.20
+    }
+  ]
+}

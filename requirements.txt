@@ -1,0 +1,5 @@
+# Install a CUDA-compatible PyTorch build and SAM3 separately.
+numpy
+Pillow
+mediapipe
+pytest

@@ -1,0 +1,207 @@
+{
+  "makeup": [
+    {
+      "name": "upper_eyelid_eyeshadow",
+      "prompts": [
+        "colored eyeshadow pigment on upper eyelid",
+        "glitter eyeshadow pigment on upper eyelid",
+        "dark eyeshadow pigment above the eye"
+      ],
+      "threshold": 0.42
+    },
+    {
+      "name": "lower_eyelid_eyeshadow",
+      "prompts": [
+        "colored eyeshadow pigment below the eye",
+        "glitter eyeshadow pigment below the lower eyelid",
+        "dark cosmetic pigment under the eye"
+      ],
+      "threshold": 0.45
+    },
+    {
+      "name": "eyeliner",
+      "prompts": [
+        "black cosmetic eyeliner line along eyelid",
+        "winged eyeliner line at outer eye corner",
+        "graphic eyeliner shape around the eye",
+        "colored eyeliner line along eyelid"
+      ],
+      "threshold": 0.42
+    },
+    {
+      "name": "false_eyelashes",
+      "prompts": [
+        "artificial false eyelashes attached to eyelid",
+        "thick decorative false eyelashes",
+        "colored artificial eyelashes"
+      ],
+      "threshold": 0.48
+    },
+    {
+      "name": "lip_color",
+      "prompts": [
+        "colored lipstick pigment on lips",
+        "dark lipstick pigment on lips",
+        "bright lipstick pigment on lips",
+        "metallic lipstick pigment on lips"
+      ],
+      "threshold": 0.42
+    },
+    {
+      "name": "lip_gloss",
+      "prompts": [
+        "glossy cosmetic coating on lips",
+        "shiny lip gloss on lips",
+        "sparkling lip gloss on lips"
+      ],
+      "threshold": 0.46
+    },
+    {
+      "name": "lip_liner",
+      "prompts": [
+        "cosmetic lip liner around lip edge",
+        "dark outlined lip border",
+        "drawn cosmetic line around lips"
+      ],
+      "threshold": 0.48
+    },
+    {
+      "name": "cheek_blush",
+      "prompts": [
+        "pink cosmetic blush patch on cheek",
+        "red cosmetic blush patch on cheek",
+        "bright colored blush pigment on cheek",
+        "dramatic circular blush patch on cheek"
+      ],
+      "threshold": 0.46
+    },
+    {
+      "name": "cheek_contour",
+      "prompts": [
+        "dark cosmetic contour stripe below cheekbone",
+        "brown contour pigment on cheek",
+        "painted shadow stripe below cheekbone"
+      ],
+      "threshold": 0.5
+    },
+    {
+      "name": "nose_contour",
+      "prompts": [
+        "dark cosmetic contour pigment along both sides of nose",
+        "paired brown cosmetic contour lines beside nose bridge",
+        "painted cosmetic contour stripe beside the nose"
+      ],
+      "threshold": 0.52
+    },
+    {
+      "name": "facial_highlighter",
+      "prompts": [
+        "shimmering cosmetic highlighter patch on cheekbone",
+        "metallic cosmetic highlighter pigment on nose bridge",
+        "bright cosmetic highlight patch above cheek",
+        "iridescent highlighter pigment on facial skin"
+      ],
+      "threshold": 0.5
+    },
+    {
+      "name": "facial_glitter",
+      "prompts": [
+        "cosmetic glitter particles attached to cheek",
+        "cosmetic glitter particles around the eye",
+        "sparkling glitter patch on facial skin",
+        "colored glitter particles on forehead"
+      ],
+      "threshold": 0.48
+    },
+    {
+      "name": "painted_face_pattern",
+      "prompts": [
+        "painted colored pattern on cheek",
+        "painted graphic shape around the eye",
+        "painted decorative line on facial skin",
+        "painted symbol on forehead",
+        "painted geometric pattern on facial skin"
+      ],
+      "threshold": 0.48
+    },
+    {
+      "name": "colored_face_patch",
+      "prompts": [
+        "solid colored paint patch on cheek",
+        "solid colored paint patch around the eye",
+        "contrasting colored paint patch on forehead",
+        "bright colored pigment patch on facial skin"
+      ],
+      "threshold": 0.5
+    },
+    {
+      "name": "makeup_sticker",
+      "prompts": [
+        "small decorative sticker attached to cheek",
+        "small star sticker attached near the eye",
+        "small heart sticker attached to facial skin",
+        "temporary tattoo decal on facial skin"
+      ],
+      "threshold": 0.5
+    },
+    {
+      "name": "painted_freckles",
+      "prompts": [
+        "drawn cosmetic freckles across cheeks",
+        "painted freckle dots on nose",
+        "decorative colored dots on facial skin"
+      ],
+      "threshold": 0.5
+    },
+    {
+      "name": "fake_blood",
+      "prompts": [
+        "fake blood streak on facial skin",
+        "theatrical blood stain on cheek",
+        "painted blood drip near mouth"
+      ],
+      "threshold": 0.52
+    },
+    {
+      "name": "prosthetic_wound",
+      "prompts": [
+        "prosthetic wound attached to facial skin",
+        "fake scar prosthetic on cheek",
+        "theatrical cut prosthetic on face"
+      ],
+      "threshold": 0.55
+    },
+    {
+      "name": "white_face_pigment",
+      "prompts": [
+        "white cosmetic pigment patch around the eye",
+        "white painted pattern on cheek",
+        "white theatrical pigment on lips",
+        "white painted shape on facial skin"
+      ],
+      "threshold": 0.52
+    },
+    {
+      "name": "black_face_pigment",
+      "prompts": [
+        "black cosmetic pigment patch around the eye",
+        "black painted pattern on cheek",
+        "black painted shape on facial skin",
+        "black theatrical pigment on lips"
+      ],
+      "threshold": 0.52
+    },
+    {
+      "name": "metallic_face_pigment",
+      "prompts": [
+        "metallic cosmetic pigment patch on cheek",
+        "gold painted pattern on facial skin",
+        "silver painted pattern on facial skin",
+        "iridescent painted shape on face"
+      ],
+      "threshold": 0.52
+    }
+  ],
+  "expression": [],
+  "jewelry": []
+}
