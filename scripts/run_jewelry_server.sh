@@ -6,8 +6,8 @@ CONDA_ENV="${CONDA_ENV:-sam3}"
 SAM3_REPO="${SAM3_REPO:-/home/zirui/KABUDA/sam3}"
 CHECKPOINT="${CHECKPOINT:-/home/zirui/KABUDA/models/sam3/sam3.pt}"
 INPUT_DIR="${INPUT_DIR:-/home/zirui/KABUDA/jewelry}"
-OUTPUT_DIR="${OUTPUT_DIR:-/home/zirui/KABUDA/debug_outputs/jewelry_v1}"
-CONFIG="${CONFIG:-${PROJECT_ROOT}/configs/jewelry_v1.json}"
+OUTPUT_DIR="${OUTPUT_DIR:-/home/zirui/KABUDA/debug_outputs/jewelry}"
+CONFIG="${CONFIG:-${PROJECT_ROOT}/configs/jewelry.json}"
 CUDA_DEVICE="${CUDA_DEVICE:-0}"
 LIMIT="${LIMIT:-5}"
 
@@ -15,7 +15,7 @@ export PYTHONPATH="${SAM3_REPO}:${PROJECT_ROOT}/src:${PYTHONPATH:-}"
 export CUDA_VISIBLE_DEVICES="${CUDA_DEVICE}"
 
 conda run --no-capture-output -n "${CONDA_ENV}" \
-  python "${PROJECT_ROOT}/scripts/infer_jewelry_v1.py" \
+  python "${PROJECT_ROOT}/scripts/infer_jewelry.py" \
     --input "${INPUT_DIR}" \
     --output-dir "${OUTPUT_DIR}" \
     --config "${CONFIG}" \

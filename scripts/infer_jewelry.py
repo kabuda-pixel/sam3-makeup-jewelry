@@ -90,7 +90,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--config",
         type=Path,
-        default=Path(__file__).resolve().parents[1] / "configs" / "jewelry_v1.json",
+        default=Path(__file__).resolve().parents[1] / "configs" / "jewelry.json",
     )
     parser.add_argument("--checkpoint-path", required=True, type=Path)
     parser.add_argument("--device", default="cuda")

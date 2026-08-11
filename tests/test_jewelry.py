@@ -5,7 +5,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from infer_jewelry_v1 import (
+from infer_jewelry import (
     Candidate,
     candidate_quality,
     count_border_contacts,

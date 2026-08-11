@@ -89,18 +89,18 @@ PY
 cd "$PROJECT_ROOT"
 
 python -m py_compile \
-  scripts/infer_makeup_v2.py \
-  scripts/infer_jewelry_v1.py \
+  scripts/infer_makeup.py \
+  scripts/infer_jewelry.py \
   src/sam3_face_attributes/core.py
 
 bash -n \
-  scripts/run_makeup_v2_server.sh \
-  scripts/run_jewelry_v1_server.sh
+  scripts/run_makeup_server.sh \
+  scripts/run_jewelry_server.sh
 
 pytest -q \
   tests/test_core.py \
-  tests/test_makeup_v2.py \
-  tests/test_jewelry_v1.py
+  tests/test_makeup.py \
+  tests/test_jewelry.py
 ```
 
 ## 6. Makeup inference
@@ -110,7 +110,7 @@ The input may be one image, a directory of images, or a text file containing one
 ```bash
 cd "$PROJECT_ROOT"
 
-CUDA_VISIBLE_DEVICES=0 python scripts/infer_makeup_v2.py \
+CUDA_VISIBLE_DEVICES=0 python scripts/infer_makeup.py \
   --input /path/to/makeup_images \
   --output-dir /path/to/makeup_outputs \
   --config configs/makeup_complex.json \
@@ -151,10 +151,10 @@ makeup_outputs/
 ```bash
 cd "$PROJECT_ROOT"
 
-CUDA_VISIBLE_DEVICES=0 python scripts/infer_jewelry_v1.py \
+CUDA_VISIBLE_DEVICES=0 python scripts/infer_jewelry.py \
   --input /path/to/jewelry_images \
   --output-dir /path/to/jewelry_outputs \
-  --config configs/jewelry_v1.json \
+  --config configs/jewelry.json \
   --checkpoint-path "$CHECKPOINT" \
   --device cuda \
   --dtype bfloat16 \

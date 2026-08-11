@@ -6,7 +6,7 @@ CONDA_ENV="${CONDA_ENV:-sam3}"
 SAM3_REPO="${SAM3_REPO:-/home/zirui/KABUDA/sam3}"
 CHECKPOINT="${CHECKPOINT:-/home/zirui/KABUDA/models/sam3/sam3.pt}"
 INPUT_DIR="${INPUT_DIR:-/home/zirui/KABUDA/makeup}"
-OUTPUT_DIR="${OUTPUT_DIR:-/home/zirui/KABUDA/debug_outputs/makeup_v2}"
+OUTPUT_DIR="${OUTPUT_DIR:-/home/zirui/KABUDA/debug_outputs/makeup}"
 CONFIG="${CONFIG:-${PROJECT_ROOT}/configs/makeup_complex.json}"
 CUDA_DEVICE="${CUDA_DEVICE:-0}"
 LIMIT="${LIMIT:-5}"
@@ -15,7 +15,7 @@ export PYTHONPATH="${SAM3_REPO}:${PROJECT_ROOT}/src:${PYTHONPATH:-}"
 export CUDA_VISIBLE_DEVICES="${CUDA_DEVICE}"
 
 conda run --no-capture-output -n "${CONDA_ENV}" \
-  python "${PROJECT_ROOT}/scripts/infer_makeup_v2.py" \
+  python "${PROJECT_ROOT}/scripts/infer_makeup.py" \
     --input "${INPUT_DIR}" \
     --output-dir "${OUTPUT_DIR}" \
     --config "${CONFIG}" \
