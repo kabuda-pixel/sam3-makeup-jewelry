@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,14 +15,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from sam3_face_attributes.core import (
     autocast_context,
     build_processor,
-    iter_images,
     load_specs,
     normalize_masks,
     normalize_scores,
     save_mask,
-    save_overlay,
     visual_evidence,
 )
+
+from sam3_face_attributes.paths import add_io_arguments, prepare_io
 
 
 LEFT_EYE = [33, 160, 158, 133, 153, 144]
@@ -111,20 +110,16 @@ class Candidate:
     crop_coverage: float
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="MediaPipe-guided SAM3 makeup segmentation.")
-    parser.add_argument("--input", required=True, type=Path)
-    parser.add_argument("--output-dir", required=True, type=Path)
+    add_io_arguments(parser)
     parser.add_argument(
         "--config",
         type=Path,
         default=Path(__file__).resolve().parents[1] / "configs" / "makeup_complex.json",
     )
-    parser.add_argument("--checkpoint-path", required=True, type=Path)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--dtype", choices=("auto", "float32", "bfloat16", "float16"), default="bfloat16")
-    parser.add_argument("--recursive", action="store_true")
-    parser.add_argument("--limit", type=int)
     parser.add_argument("--max-masks-per-prompt", type=int, default=2)
     parser.add_argument("--min-visual-evidence", type=float, default=0.08)
     parser.add_argument("--min-candidate-quality", type=float, default=0.48)
@@ -138,7 +133,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eye-exclusion-min-precision", type=float, default=0.35)
     parser.add_argument("--eye-exclusion-min-guard-recall", type=float, default=0.1)
     parser.add_argument("--eye-exclusion-max-crop-coverage", type=float, default=0.45)
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def load_face_mesh() -> Any:
@@ -518,24 +513,17 @@ def fuse_candidates(
     return probability, probability >= pixel_threshold
 
 
-def save_probability(probability: np.ndarray, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    Image.fromarray(np.clip(probability * 255.0, 0, 255).astype(np.uint8)).save(path)
-
-
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
+    jobs = prepare_io(args)
     specs = [spec for spec in load_specs(args.config) if spec.category == "makeup"]
-    images = iter_images(args.input, args.recursive)
-    if args.limit is not None:
-        images = images[: args.limit]
-    args.output_dir.mkdir(parents=True, exist_ok=True)
     processor = build_processor(args.device, args.checkpoint_path)
     face_mesh = load_face_mesh()
 
-    with (args.output_dir / "predictions.jsonl").open("w", encoding="utf-8") as output_file:
-        for image_index, image_path in enumerate(images, 1):
-            image = Image.open(image_path).convert("RGB")
+    try:
+        for image_index, (image_path, mask_path) in enumerate(jobs, 1):
+            with Image.open(image_path) as source_image:
+                image = source_image.convert("RGB")
             faces = landmark_faces(image, face_mesh)
             face_inputs: list[
                 tuple[int, dict[str, Roi], int, bool, list[tuple[float, float]] | None]
@@ -566,9 +554,7 @@ def main() -> None:
                 )
 
             candidates_by_attribute = {spec.name: [] for spec in specs}
-            rejected = []
             eye_exclusion_mask = np.zeros((image.height, image.width), dtype=bool)
-            eye_exclusion_records = []
             for face_index, rois, face_area, has_landmarks, points in face_inputs:
                 required_roi_names = {
                     roi_name
@@ -588,7 +574,7 @@ def main() -> None:
                         ("left_eye", LEFT_EYE),
                         ("right_eye", RIGHT_EYE),
                     ):
-                        exclusion, exclusion_record = segment_eye_exclusion(
+                        exclusion, _ = segment_eye_exclusion(
                             processor,
                             image,
                             rois[roi_name],
@@ -598,11 +584,10 @@ def main() -> None:
                             args,
                         )
                         eye_exclusion_mask |= exclusion
-                        eye_exclusion_records.append(exclusion_record)
 
                 for spec in specs:
                     for roi_name in route_names(spec.name, has_landmarks):
-                        branch_candidates, branch_rejected = run_candidate_branch(
+                        branch_candidates, _ = run_candidate_branch(
                             processor,
                             image,
                             rois[roi_name],
@@ -614,32 +599,10 @@ def main() -> None:
                             args,
                         )
                         candidates_by_attribute[spec.name].extend(branch_candidates)
-                        rejected.extend(branch_rejected)
 
             all_candidates = []
-            attribute_records = []
             for spec in specs:
-                attribute_candidates = deduplicate(candidates_by_attribute[spec.name])
-                all_candidates.extend(attribute_candidates)
-                attribute_records.append(
-                    {
-                        "attribute": spec.name,
-                        "accepted_count": len(attribute_candidates),
-                        "accepted": [
-                            {
-                                "face_index": candidate.face_index,
-                                "prompt": candidate.prompt,
-                                "roi": candidate.roi,
-                                "sam_score": candidate.score,
-                                "quality": candidate.quality,
-                                "face_coverage": candidate.face_coverage,
-                                "crop_coverage": candidate.crop_coverage,
-                                "visual_evidence": candidate.metrics,
-                            }
-                            for candidate in attribute_candidates
-                        ],
-                    }
-                )
+                all_candidates.extend(deduplicate(candidates_by_attribute[spec.name]))
 
             all_candidates = deduplicate(all_candidates, iou_threshold=0.9)
             probability, combined_mask = fuse_candidates(
@@ -652,43 +615,10 @@ def main() -> None:
                 combined_mask,
                 eye_exclusion_mask,
             )
-            stem = image_path.stem
-            mask_path = args.output_dir / "combined_masks" / "makeup" / f"{stem}.png"
-            overlay_path = args.output_dir / "combined_overlays" / "makeup" / f"{stem}.jpg"
-            probability_path = args.output_dir / "probability_maps" / "makeup" / f"{stem}.png"
-            eye_exclusion_path = (
-                args.output_dir / "exclusion_masks" / "eyes" / f"{stem}.png"
-            )
             save_mask(combined_mask, mask_path)
-            save_overlay(image, combined_mask, overlay_path)
-            save_probability(probability, probability_path)
-            save_mask(eye_exclusion_mask, eye_exclusion_path)
-
-            output_file.write(
-                json.dumps(
-                    {
-                        "image": str(image_path),
-                        "landmarks_detected": bool(faces),
-                        "face_count": len(faces),
-                        "accepted_candidate_count": len(all_candidates),
-                        "combined_area_ratio": float(combined_mask.mean()),
-                        "combined_mask_path": str(mask_path),
-                        "combined_overlay_path": str(overlay_path),
-                        "probability_map_path": str(probability_path),
-                        "eye_exclusion_enabled": args.eye_exclusion == "on",
-                        "eye_exclusion_area_ratio": float(eye_exclusion_mask.mean()),
-                        "eye_exclusion_mask_path": str(eye_exclusion_path),
-                        "eye_exclusion": eye_exclusion_records,
-                        "attributes": attribute_records,
-                        "rejected_candidates": rejected,
-                    },
-                    ensure_ascii=False,
-                )
-                + "\n"
-            )
-            print(f"[{image_index}/{len(images)}] {image_path}")
-
-    face_mesh.close()
+            print(f"[{image_index}/{len(jobs)}] {image_path} -> {mask_path}")
+    finally:
+        face_mesh.close()
 
 
 if __name__ == "__main__":

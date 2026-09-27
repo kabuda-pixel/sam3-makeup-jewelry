@@ -16,12 +16,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from sam3_face_attributes.core import (
     autocast_context,
     build_processor,
-    iter_images,
     normalize_masks,
     normalize_scores,
     save_mask,
-    save_overlay,
 )
+
+from sam3_face_attributes.paths import add_io_arguments, prepare_io
 
 
 LEFT_EYE = [33, 160, 158, 133, 153, 144]
@@ -83,29 +83,25 @@ class Candidate:
     border_contacts: int
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Independent SAM3 jewelry segmentation.")
-    parser.add_argument("--input", required=True, type=Path)
-    parser.add_argument("--output-dir", required=True, type=Path)
+    add_io_arguments(parser)
     parser.add_argument(
         "--config",
         type=Path,
         default=Path(__file__).resolve().parents[1] / "configs" / "jewelry.json",
     )
-    parser.add_argument("--checkpoint-path", required=True, type=Path)
     parser.add_argument("--device", default="cuda")
     parser.add_argument(
         "--dtype",
         choices=("auto", "float32", "bfloat16", "float16"),
         default="bfloat16",
     )
-    parser.add_argument("--recursive", action="store_true")
-    parser.add_argument("--limit", type=int)
     parser.add_argument("--max-masks-per-prompt", type=int, default=5)
     parser.add_argument("--pixel-threshold", type=float, default=0.46)
     parser.add_argument("--dedup-iou", type=float, default=0.84)
     parser.add_argument("--max-border-contacts", type=int, default=2)
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def load_jewelry_specs(path: Path) -> list[JewelrySpec]:
@@ -414,25 +410,17 @@ def fuse_candidates(
     return probability, probability >= pixel_threshold
 
 
-def save_probability(probability: np.ndarray, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    Image.fromarray(np.clip(probability * 255.0, 0, 255).astype(np.uint8)).save(path)
-
-
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
+    jobs = prepare_io(args)
     specs = load_jewelry_specs(args.config)
-    images = iter_images(args.input, args.recursive)
-    if args.limit is not None:
-        images = images[: args.limit]
-    args.output_dir.mkdir(parents=True, exist_ok=True)
     processor = build_processor(args.device, args.checkpoint_path)
     face_mesh = load_face_mesh()
 
-    predictions_path = args.output_dir / "predictions.jsonl"
-    with predictions_path.open("w", encoding="utf-8") as output_file:
-        for image_index, image_path in enumerate(images, 1):
-            image = Image.open(image_path).convert("RGB")
+    try:
+        for image_index, (image_path, mask_path) in enumerate(jobs, 1):
+            with Image.open(image_path) as source_image:
+                image = source_image.convert("RGB")
             faces = landmark_faces(image, face_mesh)
             face_inputs: list[tuple[int, dict[str, Roi], int, bool]] = []
             if faces:
@@ -460,7 +448,6 @@ def main() -> None:
                 )
 
             candidates_by_attribute = {spec.name: [] for spec in specs}
-            rejected = []
             for face_index, rois, face_area, has_landmarks in face_inputs:
                 required_rois = {
                     roi_name
@@ -475,7 +462,7 @@ def main() -> None:
 
                 for spec in specs:
                     for roi_name in route_names(spec.name, has_landmarks):
-                        branch_candidates, branch_rejected = run_branch(
+                        branch_candidates, _ = run_branch(
                             processor,
                             image,
                             rois[roi_name],
@@ -486,41 +473,11 @@ def main() -> None:
                             args,
                         )
                         candidates_by_attribute[spec.name].extend(branch_candidates)
-                        rejected.extend(branch_rejected)
 
             all_candidates = []
-            attribute_records = []
-            attribute_masks = {}
             for spec in specs:
-                candidates = deduplicate(
-                    candidates_by_attribute[spec.name],
-                    args.dedup_iou,
-                )
-                all_candidates.extend(candidates)
-                _, attribute_mask = fuse_candidates(
-                    candidates,
-                    (image.height, image.width),
-                    args.pixel_threshold,
-                )
-                attribute_masks[spec.name] = attribute_mask
-                attribute_records.append(
-                    {
-                        "attribute": spec.name,
-                        "accepted_count": len(candidates),
-                        "accepted": [
-                            {
-                                "face_index": candidate.face_index,
-                                "prompt": candidate.prompt,
-                                "roi": candidate.roi,
-                                "sam_score": candidate.sam_score,
-                                "quality": candidate.quality,
-                                "crop_coverage": candidate.crop_coverage,
-                                "face_coverage": candidate.face_coverage,
-                                "border_contacts": candidate.border_contacts,
-                            }
-                            for candidate in candidates
-                        ],
-                    }
+                all_candidates.extend(
+                    deduplicate(candidates_by_attribute[spec.name], args.dedup_iou)
                 )
 
             all_candidates = deduplicate(all_candidates, 0.92)
@@ -529,50 +486,10 @@ def main() -> None:
                 (image.height, image.width),
                 args.pixel_threshold,
             )
-            stem = image_path.stem
-            combined_mask_path = (
-                args.output_dir / "combined_masks" / "jewelry" / f"{stem}.png"
-            )
-            combined_overlay_path = (
-                args.output_dir / "combined_overlays" / "jewelry" / f"{stem}.jpg"
-            )
-            probability_path = (
-                args.output_dir / "probability_maps" / "jewelry" / f"{stem}.png"
-            )
-            save_mask(combined_mask, combined_mask_path)
-            save_overlay(image, combined_mask, combined_overlay_path)
-            save_probability(probability, probability_path)
-            for attribute, attribute_mask in attribute_masks.items():
-                save_mask(
-                    attribute_mask,
-                    args.output_dir
-                    / "attribute_masks"
-                    / "jewelry"
-                    / attribute
-                    / f"{stem}.png",
-                )
-
-            output_file.write(
-                json.dumps(
-                    {
-                        "image": str(image_path),
-                        "landmarks_detected": bool(faces),
-                        "face_count": len(faces),
-                        "accepted_candidate_count": len(all_candidates),
-                        "combined_area_ratio": float(combined_mask.mean()),
-                        "combined_mask_path": str(combined_mask_path),
-                        "combined_overlay_path": str(combined_overlay_path),
-                        "probability_map_path": str(probability_path),
-                        "attributes": attribute_records,
-                        "rejected_candidates": rejected,
-                    },
-                    ensure_ascii=False,
-                )
-                + "\n"
-            )
-            print(f"[{image_index}/{len(images)}] {image_path}")
-
-    face_mesh.close()
+            save_mask(combined_mask, mask_path)
+            print(f"[{image_index}/{len(jobs)}] {image_path} -> {mask_path}")
+    finally:
+        face_mesh.close()
 
 
 if __name__ == "__main__":

@@ -9,8 +9,7 @@ from typing import Any
 import numpy as np
 from PIL import Image, ImageFilter
 
-
-IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+from .paths import iter_images
 
 
 @dataclass(frozen=True)
@@ -35,19 +34,6 @@ def load_specs(path: Path) -> list[AttributeSpec]:
                 )
             )
     return specs
-
-
-def iter_images(path: Path, recursive: bool = False) -> list[Path]:
-    if path.is_file():
-        if path.suffix.lower() == ".txt":
-            return [
-                Path(line.strip())
-                for line in path.read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            ]
-        return [path]
-    candidates = path.rglob("*") if recursive else path.iterdir()
-    return sorted(item for item in candidates if item.suffix.lower() in IMAGE_SUFFIXES)
 
 
 def to_numpy(value: Any) -> np.ndarray:
@@ -172,11 +158,3 @@ def autocast_context(device: str, dtype: str):
 def save_mask(mask: np.ndarray, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(mask.astype(np.uint8) * 255).save(path)
-
-
-def save_overlay(image: Image.Image, mask: np.ndarray, path: Path) -> None:
-    base = image.convert("RGBA")
-    overlay = Image.new("RGBA", base.size, (255, 35, 90, 0))
-    overlay.putalpha(Image.fromarray(mask.astype(np.uint8) * 120))
-    path.parent.mkdir(parents=True, exist_ok=True)
-    Image.alpha_composite(base, overlay).convert("RGB").save(path, quality=95)
