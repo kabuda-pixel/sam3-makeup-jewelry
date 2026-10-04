@@ -5,7 +5,9 @@
       "prompts": [
         "colored eyeshadow pigment on upper eyelid",
         "glitter eyeshadow pigment on upper eyelid",
-        "dark eyeshadow pigment above the eye"
+        "dark eyeshadow pigment above the eye",
+        "soft neutral eyeshadow blended on upper eyelid",
+        "subtle taupe eyeshadow above the eyelid"
       ],
       "threshold": 0.42
     },
@@ -14,7 +16,9 @@
       "prompts": [
         "colored eyeshadow pigment below the eye",
         "glitter eyeshadow pigment below the lower eyelid",
-        "dark cosmetic pigment under the eye"
+        "dark cosmetic pigment under the eye",
+        "soft eyeshadow along the lower lash line",
+        "subtle smoky makeup below the lower eyelid"
       ],
       "threshold": 0.45
     },
@@ -43,7 +47,9 @@
         "colored lipstick pigment on lips",
         "dark lipstick pigment on lips",
         "bright lipstick pigment on lips",
-        "metallic lipstick pigment on lips"
+        "metallic lipstick pigment on lips",
+        "soft nude lipstick tint on lips",
+        "tinted lip balm coating on lips"
       ],
       "threshold": 0.42
     },
@@ -71,7 +77,9 @@
         "pink cosmetic blush patch on cheek",
         "red cosmetic blush patch on cheek",
         "bright colored blush pigment on cheek",
-        "dramatic circular blush patch on cheek"
+        "dramatic circular blush patch on cheek",
+        "soft peach blush blended on cheek",
+        "subtle rosy blush on cheekbone"
       ],
       "threshold": 0.46
     },

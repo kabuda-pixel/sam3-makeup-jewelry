@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,7 +23,7 @@ from sam3_face_attributes.core import (
     visual_evidence,
 )
 
-from sam3_face_attributes.paths import add_io_arguments, prepare_io
+from sam3_face_attributes.paths import add_io_arguments, normalized_path, prepare_io
 
 
 LEFT_EYE = [33, 160, 158, 133, 153, 144]
@@ -60,6 +61,12 @@ PRECISE_ATTRIBUTES = {
 
 REGIONAL_ATTRIBUTES = set(ROUTE_MAP) - PRECISE_ATTRIBUTES
 
+LOW_CONTRAST_ATTRIBUTES = {
+    "upper_eyelid_eyeshadow",
+    "lower_eyelid_eyeshadow",
+    "cheek_blush",
+}
+
 ATTRIBUTE_MAX_FACE_COVERAGE = {
     "upper_eyelid_eyeshadow": 0.12,
     "lower_eyelid_eyeshadow": 0.10,
@@ -72,7 +79,23 @@ ATTRIBUTE_MAX_FACE_COVERAGE = {
     "cheek_contour": 0.22,
     "nose_contour": 0.12,
     "facial_highlighter": 0.30,
+    "facial_glitter": 0.15,
+    "makeup_sticker": 0.08,
+    "painted_freckles": 0.08,
+    "fake_blood": 0.15,
+    "prosthetic_wound": 0.18,
 }
+
+FULL_FACE_PAINT_ATTRIBUTES = {
+    "colored_face_patch",
+    "white_face_pigment",
+    "black_face_pigment",
+    "metallic_face_pigment",
+}
+FULL_FACE_PAINT_MIN_SCORE = 0.8
+FULL_FACE_PAINT_MIN_EVIDENCE = 0.18
+FULL_FACE_PAINT_MAX_FACE_COVERAGE = 0.65
+FULL_FACE_PAINT_MAX_TOTAL_COVERAGE = 0.8
 
 EYE_EXCLUSION_PROMPT_GROUPS = {
     "eye_interior": (
@@ -120,14 +143,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--dtype", choices=("auto", "float32", "bfloat16", "float16"), default="bfloat16")
-    parser.add_argument("--max-masks-per-prompt", type=int, default=2)
+    parser.add_argument("--max-masks-per-prompt", type=int, default=5)
     parser.add_argument("--min-visual-evidence", type=float, default=0.08)
     parser.add_argument("--min-candidate-quality", type=float, default=0.48)
     parser.add_argument("--pixel-threshold", type=float, default=0.45)
     parser.add_argument("--precise-max-face-coverage", type=float, default=0.12)
     parser.add_argument("--regional-max-face-coverage", type=float, default=0.35)
-    parser.add_argument("--global-max-face-coverage", type=float, default=0.92)
+    parser.add_argument("--global-max-face-coverage", type=float, default=0.38)
+    parser.add_argument("--max-total-face-coverage", type=float, default=0.55)
+    parser.add_argument("--no-landmark-max-image-coverage", type=float, default=0.18)
     parser.add_argument("--max-crop-coverage", type=float, default=0.78)
+    parser.add_argument("--diagnostics-dir", type=normalized_path,
+                        help="Optional JSON candidate decisions in a separate directory.")
     parser.add_argument("--eye-exclusion", choices=("on", "off"), default="on")
     parser.add_argument("--eye-exclusion-min-score", type=float, default=0.35)
     parser.add_argument("--eye-exclusion-min-precision", type=float, default=0.35)
@@ -268,9 +295,9 @@ def eye_aperture_guard(
     mask_image = Image.new("L", image.size, 0)
     ImageDraw.Draw(mask_image).polygon(polygon, fill=255)
     eye_width = max(point[0] for point in polygon) - min(point[0] for point in polygon)
-    radius = max(1, int(round(eye_width * 0.06)))
-    filter_size = 2 * radius + 1
-    return np.asarray(mask_image.filter(ImageFilter.MaxFilter(filter_size))) > 0
+    radius = max(1, int(round(eye_width * 0.02)))
+    interior = np.asarray(mask_image.filter(ImageFilter.MinFilter(2 * radius + 1))) > 0
+    return interior if interior.any() else np.asarray(mask_image) > 0
 
 
 def segment_eye_exclusion(
@@ -383,6 +410,18 @@ def max_face_coverage(attribute: str, args: argparse.Namespace) -> float:
     return args.global_max_face_coverage
 
 
+def is_confident_full_face_paint(
+    attribute: str,
+    score: float,
+    metrics: dict[str, float],
+) -> bool:
+    return (
+        attribute in FULL_FACE_PAINT_ATTRIBUTES
+        and score >= FULL_FACE_PAINT_MIN_SCORE
+        and metrics.get("evidence", 0.0) >= FULL_FACE_PAINT_MIN_EVIDENCE
+    )
+
+
 def candidate_quality(
     sam_score: float,
     metrics: dict[str, float],
@@ -392,12 +431,29 @@ def candidate_quality(
     coverage_penalty = max(0.0, 1.0 - max(0.0, crop_coverage - 0.45) / 0.55)
     return float(
         np.clip(
-            (0.58 * sam_score + 0.27 * metrics["evidence"] + 0.15 * branch_prior)
+            (0.68 * sam_score + 0.17 * metrics["evidence"] + 0.15 * branch_prior)
             * coverage_penalty,
             0.0,
             1.0,
         )
     )
+
+
+def required_visual_evidence(
+    attribute: str,
+    sam_score: float,
+    face_coverage: float,
+    min_evidence: float,
+) -> float:
+    if attribute in LOW_CONTRAST_ATTRIBUTES and sam_score >= 0.6:
+        min_coverage = 0.01 if attribute == "cheek_blush" else 0.005
+        if face_coverage >= min_coverage:
+            return min_evidence * 0.25
+    if attribute in PRECISE_ATTRIBUTES:
+        return min_evidence * 0.4
+    if attribute in REGIONAL_ATTRIBUTES:
+        return min_evidence * 0.7
+    return min_evidence
 
 
 def run_candidate_branch(
@@ -410,10 +466,13 @@ def run_candidate_branch(
     prompts: tuple[str, ...],
     face_area: int,
     args: argparse.Namespace,
+    min_sam_score: float = 0.0,
+    has_landmarks: bool = True,
 ) -> tuple[list[Candidate], list[dict[str, Any]]]:
     accepted = []
     rejected = []
     for prompt in prompts:
+        prompt_accepted = []
         with autocast_context(args.device, args.dtype):
             result = processor.set_text_prompt(state=state, prompt=prompt)
         masks = normalize_masks(result.get("masks", []))
@@ -426,6 +485,9 @@ def run_candidate_branch(
             face_coverage = float(full_mask.sum() / max(1, face_area))
             metrics = visual_evidence(image, full_mask)
             quality = candidate_quality(score, metrics, roi.branch_prior, crop_coverage)
+            evidence_threshold = required_visual_evidence(
+                attribute, score, face_coverage, args.min_visual_evidence,
+            )
             record = {
                 "face_index": face_index,
                 "attribute": attribute,
@@ -436,19 +498,29 @@ def run_candidate_branch(
                 "crop_coverage": crop_coverage,
                 "face_coverage": face_coverage,
                 "visual_evidence": metrics,
+                "required_visual_evidence": evidence_threshold,
             }
             reason = None
-            if crop_coverage > args.max_crop_coverage:
+            if score < min_sam_score:
+                reason = "below_attribute_sam_score"
+            elif not has_landmarks and crop_coverage > args.no_landmark_max_image_coverage:
+                reason = "excessive_image_coverage_without_landmarks"
+            elif crop_coverage > args.max_crop_coverage:
                 reason = "excessive_crop_coverage"
-            elif face_coverage > max_face_coverage(attribute, args):
+            elif face_coverage > (
+                max(FULL_FACE_PAINT_MAX_FACE_COVERAGE, args.global_max_face_coverage)
+                if is_confident_full_face_paint(attribute, score, metrics)
+                else max_face_coverage(attribute, args)
+            ):
                 reason = "excessive_face_coverage"
-            elif metrics["evidence"] < args.min_visual_evidence:
+            elif metrics["evidence"] < evidence_threshold:
                 reason = "insufficient_visual_evidence"
             elif quality < args.min_candidate_quality:
                 reason = "low_candidate_quality"
             elif (
                 attribute not in PRECISE_ATTRIBUTES
                 and attribute not in REGIONAL_ATTRIBUTES
+                and not is_confident_full_face_paint(attribute, score, metrics)
                 and face_coverage > 0.35
                 and quality
                 < args.min_candidate_quality
@@ -459,7 +531,7 @@ def run_candidate_branch(
                 record["reason"] = reason
                 rejected.append(record)
                 continue
-            accepted.append(
+            prompt_accepted.append(
                 Candidate(
                     face_index=face_index,
                     attribute=attribute,
@@ -473,6 +545,63 @@ def run_candidate_branch(
                     crop_coverage=crop_coverage,
                 )
             )
+        prompt_accepted.sort(key=lambda item: item.quality, reverse=True)
+        accepted.extend(prompt_accepted[:2])
+        for candidate in prompt_accepted[2:]:
+            rejected.append({
+                "face_index": face_index,
+                "attribute": attribute,
+                "prompt": prompt,
+                "roi": roi.name,
+                "sam_score": candidate.score,
+                "quality": candidate.quality,
+                "face_coverage": candidate.face_coverage,
+                "reason": "lower_ranked_valid_candidate",
+            })
+    return accepted, rejected
+
+
+def limit_total_face_coverage(
+    candidates: list[Candidate],
+    face_areas: dict[int, int],
+    max_coverage: float,
+) -> tuple[list[Candidate], list[dict[str, Any]]]:
+    """Reserve room for local makeup before admitting broad facial regions."""
+    accepted = []
+    rejected = []
+    unions: dict[int, np.ndarray] = {}
+    for candidate in sorted(
+        candidates,
+        key=lambda item: (
+            2 if item.attribute in PRECISE_ATTRIBUTES else
+            1 if item.attribute in REGIONAL_ATTRIBUTES else 0,
+            item.quality,
+        ),
+        reverse=True,
+    ):
+        current = unions.setdefault(candidate.face_index, np.zeros_like(candidate.mask))
+        proposed = current | candidate.mask
+        coverage = float(proposed.sum() / max(1, face_areas[candidate.face_index]))
+        allowed_coverage = (
+            max(max_coverage, FULL_FACE_PAINT_MAX_TOTAL_COVERAGE)
+            if is_confident_full_face_paint(
+                candidate.attribute, candidate.score, candidate.metrics,
+            )
+            else max_coverage
+        )
+        if coverage > allowed_coverage:
+            rejected.append({
+                "face_index": candidate.face_index,
+                "attribute": candidate.attribute,
+                "prompt": candidate.prompt,
+                "roi": candidate.roi,
+                "quality": candidate.quality,
+                "proposed_face_coverage": coverage,
+                "reason": "excessive_total_face_coverage",
+            })
+            continue
+        unions[candidate.face_index] = proposed
+        accepted.append(candidate)
     return accepted, rejected
 
 
@@ -515,6 +644,8 @@ def fuse_candidates(
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
+    if args.diagnostics_dir is not None and args.diagnostics_dir.is_relative_to(args.output_dir):
+        raise ValueError("Diagnostics directory must be outside the mask output directory.")
     jobs = prepare_io(args)
     specs = [spec for spec in load_specs(args.config) if spec.category == "makeup"]
     processor = build_processor(args.device, args.checkpoint_path)
@@ -554,6 +685,8 @@ def main(argv: list[str] | None = None) -> None:
                 )
 
             candidates_by_attribute = {spec.name: [] for spec in specs}
+            rejected_candidates: list[dict[str, Any]] = []
+            face_areas = {face_index: face_area for face_index, _, face_area, _, _ in face_inputs}
             eye_exclusion_mask = np.zeros((image.height, image.width), dtype=bool)
             for face_index, rois, face_area, has_landmarks, points in face_inputs:
                 required_roi_names = {
@@ -587,7 +720,7 @@ def main(argv: list[str] | None = None) -> None:
 
                 for spec in specs:
                     for roi_name in route_names(spec.name, has_landmarks):
-                        branch_candidates, _ = run_candidate_branch(
+                        branch_candidates, branch_rejected = run_candidate_branch(
                             processor,
                             image,
                             rois[roi_name],
@@ -597,14 +730,21 @@ def main(argv: list[str] | None = None) -> None:
                             spec.prompts,
                             face_area,
                             args,
+                            min_sam_score=spec.threshold,
+                            has_landmarks=has_landmarks,
                         )
                         candidates_by_attribute[spec.name].extend(branch_candidates)
+                        rejected_candidates.extend(branch_rejected)
 
             all_candidates = []
             for spec in specs:
                 all_candidates.extend(deduplicate(candidates_by_attribute[spec.name]))
 
             all_candidates = deduplicate(all_candidates, iou_threshold=0.9)
+            all_candidates, coverage_rejected = limit_total_face_coverage(
+                all_candidates, face_areas, args.max_total_face_coverage,
+            )
+            rejected_candidates.extend(coverage_rejected)
             probability, combined_mask = fuse_candidates(
                 all_candidates,
                 (image.height, image.width),
@@ -616,6 +756,29 @@ def main(argv: list[str] | None = None) -> None:
                 eye_exclusion_mask,
             )
             save_mask(combined_mask, mask_path)
+            if args.diagnostics_dir is not None:
+                report_path = args.diagnostics_dir / mask_path.relative_to(args.output_dir)
+                report_path = report_path.with_suffix(report_path.suffix + ".json")
+                report_path.parent.mkdir(parents=True, exist_ok=True)
+                report_path.write_text(json.dumps({
+                    "image": str(image_path),
+                    "face_landmarks_detected": len(faces),
+                    "selected": [
+                        {
+                            "face_index": candidate.face_index,
+                            "attribute": candidate.attribute,
+                            "prompt": candidate.prompt,
+                            "roi": candidate.roi,
+                            "sam_score": candidate.score,
+                            "quality": candidate.quality,
+                            "face_coverage": candidate.face_coverage,
+                        }
+                        for candidate in all_candidates
+                    ],
+                    "rejected": rejected_candidates,
+                    "final_mask_pixels": int(combined_mask.sum()),
+                    "final_image_coverage": float(combined_mask.mean()),
+                }, ensure_ascii=False, indent=2), encoding="utf-8")
             print(f"[{image_index}/{len(jobs)}] {image_path} -> {mask_path}")
     finally:
         face_mesh.close()

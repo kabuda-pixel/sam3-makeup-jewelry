@@ -94,6 +94,12 @@ SAM3 已安装且可以直接导入时，可省略 `--sam3-repo`。GPU 通过 `C
 | `--config` | 根据任务选择 | 自定义提示词与阈值配置 JSON |
 | `--device` | `cuda` | 推理设备 |
 | `--dtype` | `bfloat16` | `auto`、`float32`、`bfloat16` 或 `float16` |
+| `--max-masks-per-prompt` | `5`（化妆） | 每条提示词检查的 SAM3 候选数；增加可减少有效妆容排在后面时的漏检 |
+| `--global-max-face-coverage` | `0.38`（化妆） | 普通全脸搜索候选最多覆盖的人脸比例；高置信度戏剧彩绘有单独上限 |
+| `--max-total-face-coverage` | `0.55`（化妆） | 普通候选合并前允许的最大覆盖比例；高置信度戏剧彩绘有单独上限 |
+| `--no-landmark-max-image-coverage` | `0.18`（化妆） | 人脸关键点未检出时，整图候选允许的最大覆盖比例 |
+| `--diagnostics-dir` | 不指定 | 可选诊断 JSON 目录，独立于二值 mask 输出目录 |
+| `--min-jewelry-highlight` | `0.08`（饰品） | 唇饰、眉饰和面部宝石相对周围像素的最低亮度差 |
 
 默认配置为 [makeup_complex.json](configs/makeup_complex.json) 和 [jewelry.json](configs/jewelry.json)，根据项目位置自动定位。
 
@@ -162,6 +168,26 @@ python scripts/infer_masks.py \
 单图输入直接保存到输出目录。清单输入的子目录结构以所有列出图片的共同父目录为基准。
 
 输出仅包含最终二值 mask；化妆任务中的眼部排除仍参与最终 mask 的计算。重复运行会覆盖对应的 mask，输出目录中的历史文件不会自动删除。需要一份干净结果时，请使用新的输出目录。
+
+### 化妆 mask 排查
+
+化妆任务会使用配置中每种属性的 `threshold` 作为 SAM3 分数下限。假血、假雀斑、贴纸等属性有较小的面积上限，避免普通肤色被误判为这些妆容；高置信度的白色、黑色或彩色戏剧彩绘仍可覆盖大面积人脸。配置还包含自然色眼影、柔和腮红和裸色唇妆提示词。当 SAM3 对腮红或眼影给出较高分数且候选面积合理时，会放宽视觉对比度门槛；细小眼线和唇妆也使用较低门槛。眼球排除区域只取眼裂内部，避免排除眼缘妆容。
+
+对问题图片单独运行并保存诊断信息：
+
+```bash
+python scripts/infer_masks.py \
+  --input /path/to/problem.jpg --task makeup \
+  --output-dir /path/to/masks \
+  --checkpoint-path /path/to/models/sam3.pt \
+  --diagnostics-dir /path/to/diagnostics
+```
+
+诊断 JSON 与 mask 同名，末尾附加 `.json`。其中 `selected` 列出保留的候选，`rejected` 给出每个未通过候选的原因及视觉对比度要求，`face_landmarks_detected` 可判断是否进入整图回退路径。若真实妆容面积较大，可适当调高 `--global-max-face-coverage` 和 `--max-total-face-coverage`；若漏掉低对比度妆容，可适当降低 `--min-visual-evidence` 或 `--min-candidate-quality`，并用诊断记录核对原因。阈值只能约束候选；SAM3 完全没有生成目标区域时，提示词或模型必须能先产生候选。与肤色接近、边界不清的底妆无法仅凭颜色可靠地得到精确边界。
+
+### 饰品 mask 排查
+
+唇饰、眉饰与面部宝石使用更严格的小面积限制和局部亮度检查，避免整片嘴唇、眉毛或发丝进入饰品 mask。唇饰还需靠近唇缘并有一部分位于唇面外；面部宝石需落在人脸范围内，不能主要位于唇面。可为饰品任务同样指定 `--diagnostics-dir` 查看每个候选的拒绝原因。深色、无反光的真实穿孔饰品可能被亮度门槛过滤；遇到这类样本时可调低 `--min-jewelry-highlight`，并核查输出。
 
 读取 mask：
 

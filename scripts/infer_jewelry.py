@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFilter
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -21,7 +21,7 @@ from sam3_face_attributes.core import (
     save_mask,
 )
 
-from sam3_face_attributes.paths import add_io_arguments, prepare_io
+from sam3_face_attributes.paths import add_io_arguments, normalized_path, prepare_io
 
 
 LEFT_EYE = [33, 160, 158, 133, 153, 144]
@@ -101,6 +101,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--pixel-threshold", type=float, default=0.46)
     parser.add_argument("--dedup-iou", type=float, default=0.84)
     parser.add_argument("--max-border-contacts", type=int, default=2)
+    parser.add_argument("--min-jewelry-highlight", type=float, default=0.08)
+    parser.add_argument("--diagnostics-dir", type=normalized_path,
+                        help="Optional JSON candidate decisions in a separate directory.")
     return parser.parse_args(argv)
 
 
@@ -289,6 +292,61 @@ def count_border_contacts(mask: np.ndarray) -> int:
     )
 
 
+def lip_anatomy_masks(
+    points: list[tuple[float, float]], image: Image.Image,
+) -> tuple[np.ndarray, np.ndarray]:
+    polygon = [points[index] for index in OUTER_LIPS]
+    lip_image = Image.new("L", image.size, 0)
+    ImageDraw.Draw(lip_image).polygon(polygon, fill=255)
+    xs, ys = zip(*polygon)
+    lip_width = max(xs) - min(xs)
+    lip_height = max(ys) - min(ys)
+    radius = max(2, int(round(lip_width * 0.18)))
+    surface = np.asarray(lip_image) > 0
+    cx, cy = float(np.mean(xs)), float(np.mean(ys))
+    scale_x = 1.0 + 2.0 * radius / max(1.0, lip_width)
+    scale_y = 1.0 + 2.0 * radius / max(1.0, lip_height)
+    vicinity_image = Image.new("L", image.size, 0)
+    ImageDraw.Draw(vicinity_image).polygon(
+        [(cx + (x - cx) * scale_x, cy + (y - cy) * scale_y) for x, y in polygon],
+        fill=255,
+    )
+    vicinity = np.asarray(vicinity_image) > 0
+    return surface, vicinity
+
+
+def face_surface_mask(
+    points: list[tuple[float, float]], image: Image.Image,
+) -> np.ndarray:
+    face_image = Image.new("L", image.size, 0)
+    ImageDraw.Draw(face_image).polygon([points[index] for index in FACE_OVAL], fill=255)
+    return np.asarray(face_image) > 0
+
+
+def piercing_highlight_contrast(gray: np.ndarray, mask: np.ndarray) -> float:
+    if not mask.any():
+        return 0.0
+    ys, xs = np.nonzero(mask)
+    y0, y1 = max(0, int(ys.min()) - 5), min(mask.shape[0], int(ys.max()) + 6)
+    x0, x1 = max(0, int(xs.min()) - 5), min(mask.shape[1], int(xs.max()) + 6)
+    local_mask = mask[y0:y1, x0:x1]
+    mask_image = Image.fromarray(local_mask.astype(np.uint8) * 255)
+    ring = (np.asarray(mask_image.filter(ImageFilter.MaxFilter(11))) > 0) & ~local_mask
+    if not ring.any():
+        return 0.0
+    local_gray = gray[y0:y1, x0:x1]
+    return float(np.quantile(local_gray[local_mask], 0.8) - np.median(local_gray[ring]))
+
+
+def lip_boundary_fractions(
+    mask: np.ndarray, surface: np.ndarray, vicinity: np.ndarray,
+) -> tuple[float, float]:
+    area = max(1, int(mask.sum()))
+    outside = float((mask & ~surface).sum() / area)
+    nearby = float((mask & vicinity).sum() / area)
+    return outside, nearby
+
+
 def candidate_quality(
     sam_score: float,
     branch_prior: float,
@@ -314,6 +372,10 @@ def run_branch(
     face_area: int,
     spec: JewelrySpec,
     args: argparse.Namespace,
+    lip_surface: np.ndarray | None = None,
+    lip_vicinity: np.ndarray | None = None,
+    face_surface: np.ndarray | None = None,
+    gray_image: np.ndarray | None = None,
 ) -> tuple[list[Candidate], list[dict[str, Any]]]:
     accepted = []
     rejected = []
@@ -335,6 +397,9 @@ def run_branch(
                 crop_coverage,
                 spec.max_crop_coverage,
             )
+            highlight = None
+            outside_lip = nearby_lip = None
+            face_precision = None
             reason = None
             if sam_score < spec.min_sam_score:
                 reason = "low_sam_score"
@@ -346,6 +411,32 @@ def run_branch(
                 reason = "mask_touches_too_many_crop_borders"
             elif quality < spec.min_quality:
                 reason = "low_candidate_quality"
+            if reason is None and spec.name == "lip_jewelry":
+                if lip_surface is None or lip_vicinity is None:
+                    reason = "lip_landmarks_required"
+                else:
+                    outside_lip, nearby_lip = lip_boundary_fractions(
+                        full_mask, lip_surface, lip_vicinity,
+                    )
+                    if outside_lip < 0.20 or nearby_lip < 0.70:
+                        reason = "mask_is_lip_surface"
+            if reason is None and spec.name == "face_gems":
+                if face_surface is None or lip_surface is None:
+                    reason = "face_landmarks_required"
+                else:
+                    area = max(1, int(full_mask.sum()))
+                    face_precision = float((full_mask & face_surface).sum() / area)
+                    lip_overlap = float((full_mask & lip_surface).sum() / area)
+                    if face_precision < 0.70:
+                        reason = "gem_outside_face"
+                    elif lip_overlap > 0.20:
+                        reason = "gem_on_lip_surface"
+            if reason is None and spec.name in {"lip_jewelry", "eyebrow_jewelry", "face_gems"}:
+                if gray_image is None:
+                    gray_image = np.asarray(image.convert("L"), dtype=np.float32) / 255.0
+                highlight = piercing_highlight_contrast(gray_image, full_mask)
+                if highlight < args.min_jewelry_highlight:
+                    reason = "insufficient_jewelry_highlight"
             record = {
                 "face_index": face_index,
                 "attribute": spec.name,
@@ -356,6 +447,10 @@ def run_branch(
                 "crop_coverage": crop_coverage,
                 "face_coverage": face_coverage,
                 "border_contacts": border_contacts,
+                "piercing_highlight": highlight,
+                "outside_lip_fraction": outside_lip,
+                "near_lip_fraction": nearby_lip,
+                "face_precision": face_precision,
             }
             if reason is not None:
                 record["reason"] = reason
@@ -412,6 +507,8 @@ def fuse_candidates(
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
+    if args.diagnostics_dir is not None and args.diagnostics_dir.is_relative_to(args.output_dir):
+        raise ValueError("Diagnostics directory must be outside the mask output directory.")
     jobs = prepare_io(args)
     specs = load_jewelry_specs(args.config)
     processor = build_processor(args.device, args.checkpoint_path)
@@ -421,8 +518,11 @@ def main(argv: list[str] | None = None) -> None:
         for image_index, (image_path, mask_path) in enumerate(jobs, 1):
             with Image.open(image_path) as source_image:
                 image = source_image.convert("RGB")
+            gray_image = np.asarray(image.convert("L"), dtype=np.float32) / 255.0
             faces = landmark_faces(image, face_mesh)
-            face_inputs: list[tuple[int, dict[str, Roi], int, bool]] = []
+            face_inputs: list[
+                tuple[int, dict[str, Roi], int, bool, list[tuple[float, float]] | None]
+            ] = []
             if faces:
                 for face_index, points in enumerate(faces):
                     rois = build_rois(points, image)
@@ -430,7 +530,7 @@ def main(argv: list[str] | None = None) -> None:
                     face_area = (face_box[2] - face_box[0]) * (
                         face_box[3] - face_box[1]
                     )
-                    face_inputs.append((face_index, rois, face_area, True))
+                    face_inputs.append((face_index, rois, face_area, True, points))
             else:
                 face_inputs.append(
                     (
@@ -444,11 +544,17 @@ def main(argv: list[str] | None = None) -> None:
                         },
                         image.width * image.height,
                         False,
+                        None,
                     )
                 )
 
             candidates_by_attribute = {spec.name: [] for spec in specs}
-            for face_index, rois, face_area, has_landmarks in face_inputs:
+            rejected_candidates: list[dict[str, Any]] = []
+            for face_index, rois, face_area, has_landmarks, points in face_inputs:
+                lip_surface, lip_vicinity = (
+                    lip_anatomy_masks(points, image) if points is not None else (None, None)
+                )
+                face_surface = face_surface_mask(points, image) if points is not None else None
                 required_rois = {
                     roi_name
                     for spec in specs
@@ -462,7 +568,7 @@ def main(argv: list[str] | None = None) -> None:
 
                 for spec in specs:
                     for roi_name in route_names(spec.name, has_landmarks):
-                        branch_candidates, _ = run_branch(
+                        branch_candidates, branch_rejected = run_branch(
                             processor,
                             image,
                             rois[roi_name],
@@ -471,8 +577,13 @@ def main(argv: list[str] | None = None) -> None:
                             face_area,
                             spec,
                             args,
+                            lip_surface=lip_surface,
+                            lip_vicinity=lip_vicinity,
+                            face_surface=face_surface,
+                            gray_image=gray_image,
                         )
                         candidates_by_attribute[spec.name].extend(branch_candidates)
+                        rejected_candidates.extend(branch_rejected)
 
             all_candidates = []
             for spec in specs:
@@ -487,6 +598,28 @@ def main(argv: list[str] | None = None) -> None:
                 args.pixel_threshold,
             )
             save_mask(combined_mask, mask_path)
+            if args.diagnostics_dir is not None:
+                report_path = args.diagnostics_dir / mask_path.relative_to(args.output_dir)
+                report_path = report_path.with_suffix(report_path.suffix + ".json")
+                report_path.parent.mkdir(parents=True, exist_ok=True)
+                report_path.write_text(json.dumps({
+                    "image": str(image_path),
+                    "face_landmarks_detected": len(faces),
+                    "selected": [
+                        {
+                            "face_index": candidate.face_index,
+                            "attribute": candidate.attribute,
+                            "prompt": candidate.prompt,
+                            "roi": candidate.roi,
+                            "sam_score": candidate.sam_score,
+                            "quality": candidate.quality,
+                            "face_coverage": candidate.face_coverage,
+                        }
+                        for candidate in all_candidates
+                    ],
+                    "rejected": rejected_candidates,
+                    "final_mask_pixels": int(combined_mask.sum()),
+                }, ensure_ascii=False, indent=2), encoding="utf-8")
             print(f"[{image_index}/{len(jobs)}] {image_path} -> {mask_path}")
     finally:
         face_mesh.close()

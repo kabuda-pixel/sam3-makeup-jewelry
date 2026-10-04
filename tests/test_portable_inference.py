@@ -124,6 +124,7 @@ class PortableInferenceTests(unittest.TestCase):
                 mesh = SimpleNamespace(close=Mock())
                 processor = SimpleNamespace(set_image=Mock(return_value={}))
                 out = self.root / (task + '_masks')
+                diagnostics = self.root / (task + '_diagnostics')
                 with contextlib.ExitStack() as stack:
                     stack.enter_context(patch.object(module, 'build_processor', return_value=processor))
                     stack.enter_context(patch.object(module, 'load_face_mesh', return_value=mesh))
@@ -131,8 +132,10 @@ class PortableInferenceTests(unittest.TestCase):
                     stack.enter_context(patch.object(module, 'autocast_context', side_effect=lambda *_: contextlib.nullcontext()))
                     stack.enter_context(patch.object(module, branch, return_value=([candidate], [])))
                     stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
-                    infer_masks.main(['--input', str(self.root / task), '--output-dir', str(out),
-                                      '--checkpoint-path', str(self.checkpoint), '--config', str(config)])
+                    command = ['--input', str(self.root / task), '--output-dir', str(out),
+                               '--checkpoint-path', str(self.checkpoint), '--config', str(config)]
+                    command += ['--diagnostics-dir', str(diagnostics)]
+                    infer_masks.main(command)
                 files = [p for p in out.rglob('*') if p.is_file()]
                 self.assertEqual(len(files), 7)
                 self.assertTrue((out / 'nested/a.jpg.png').is_file())
@@ -144,6 +147,9 @@ class PortableInferenceTests(unittest.TestCase):
                         self.assertEqual(result.mode, 'L')
                         self.assertEqual(result.size, (12, 10))
                         np.testing.assert_array_equal(np.asarray(result), mask.astype(np.uint8) * 255)
+                report = json.loads((diagnostics / 'a.jpg.png.json').read_text())
+                self.assertEqual(report['final_mask_pixels'], int(mask.sum()))
+                self.assertEqual(len(report['selected']), 1)
                 mesh.close.assert_called_once()
 
     def test_no_limit_option_and_recursion_defaults(self):

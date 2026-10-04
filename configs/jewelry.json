@@ -37,8 +37,8 @@
       ],
       "min_sam_score": 0.30,
       "min_quality": 0.45,
-      "max_crop_coverage": 0.30,
-      "max_face_coverage": 0.08
+      "max_crop_coverage": 0.03,
+      "max_face_coverage": 0.004
     },
     {
       "name": "eyebrow_jewelry",
@@ -49,8 +49,8 @@
       ],
       "min_sam_score": 0.30,
       "min_quality": 0.45,
-      "max_crop_coverage": 0.30,
-      "max_face_coverage": 0.08
+      "max_crop_coverage": 0.03,
+      "max_face_coverage": 0.003
     },
     {
       "name": "face_gems",
@@ -60,10 +60,10 @@
         "small jewel attached to the face",
         "crystal decoration attached to facial skin"
       ],
-      "min_sam_score": 0.32,
+      "min_sam_score": 0.60,
       "min_quality": 0.47,
-      "max_crop_coverage": 0.25,
-      "max_face_coverage": 0.22
+      "max_crop_coverage": 0.03,
+      "max_face_coverage": 0.03
     },
     {
       "name": "forehead_jewelry",
